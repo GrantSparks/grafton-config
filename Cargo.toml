@@ -2,6 +2,15 @@
 name = "grafton-config"
 version = "0.1.0"
 edition = "2021"
+authors = ["Grant Sparks <grant@grafton.ai>"]
+description = "Load configuration from toml files with token variable expansion and environment overrides"
+license = "Apache-2.0"
+repository = "https://github.com/GrantSparks/grafton"
+homepage = "https://www.grafton.ai"
+categories = ["config"]
+keywords = ["configuration", "config", "settings"]
+publish = false
+include = ["Cargo.toml", "src/**/*"]
 
 [dependencies]
 derivative = "2"

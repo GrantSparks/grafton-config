@@ -14,8 +14,11 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub use {config::GraftonConfig, config_loader::load_config_from_dir};
 
-pub trait GraftonConfigProvider:
+pub trait GraftonConfigProvider: TokenExpandingConfig {
+    fn get_grafton_config(&self) -> &GraftonConfig;
+}
+
+pub trait TokenExpandingConfig:
     'static + Send + Sync + DeserializeOwned + Serialize + std::fmt::Debug
 {
-    fn get_grafton_config(&self) -> &GraftonConfig;
 }
