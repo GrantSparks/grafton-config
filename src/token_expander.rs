@@ -1,17 +1,15 @@
 use {
-    lazy_static::lazy_static,
+    once_cell::sync::Lazy,
     regex::{Captures, Regex},
     serde_json::Value,
 };
 
 const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99;
 
-lazy_static! {
-    static ref TOKEN_REGEX: Regex = Regex::new(r"\$\{(.*?)\}").unwrap();
-}
+static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{(.*?)\}").unwrap());
 
 pub fn expand_tokens(val: &Value) -> Value {
-    expand_tokens_helper(val, val, 0, "")
+    expand_tokens_helper(val, val, 0, "").unwrap()
 }
 
 fn expand_tokens_helper(
@@ -19,78 +17,70 @@ fn expand_tokens_helper(
     root: &Value,
     current_depth: usize,
     current_path: &str,
-) -> Value {
+) -> Result<Value, String> {
     if current_depth > TOKEN_RESOLVE_DEPTH_LIMIT {
-        let message = format!(
+        return Err(format!(
             "Token resolve recursion detected at depth {current_depth}. Current path: {current_path}, Current value: {val:?}"
-        );
-        panic!("{}", message);
+        ));
     }
 
     match val {
         Value::String(s) => {
             let result = TOKEN_REGEX.replace_all(s, |caps: &Captures| {
                 let key_path: Vec<&str> = caps[1].split('.').collect();
-                let replacement_val = get_value_from_path(&key_path, root);
-
-                replacement_val.map_or_else(
+                get_value_from_path(&key_path, root).map_or_else(
                     || format!("${{{}}}", key_path.join(".")),
                     |replacement_val| {
-                        let key_path_str = key_path.join(".");
-                        let replacement_expanded = expand_tokens_helper(
+                        expand_tokens_helper(
                             &replacement_val,
                             root,
                             current_depth + 1,
-                            &key_path_str,
-                        );
-
-                        match replacement_expanded {
-                            Value::String(s) => s,
-                            Value::Number(n) => n.to_string(),
-                            Value::Bool(b) => b.to_string(),
-                            Value::Null => "null".to_string(),
-                            _ => format!("${{{key_path_str}}}"),
-                        }
+                            &key_path.join("."),
+                        )
+                        .map_or_else(
+                            |_| format!("${{{}}}", key_path.join(".")),
+                            |expanded_val| match expanded_val {
+                                Value::String(s) => s,
+                                Value::Number(n) => n.to_string(),
+                                Value::Bool(b) => b.to_string(),
+                                Value::Null => "null".to_string(),
+                                _ => format!("${{{}}}", key_path.join(".")),
+                            },
+                        )
                     },
                 )
             });
-            Value::String(result.to_string())
+            Ok(Value::String(result.to_string()))
         }
-        Value::Object(o) => Value::Object(
+        Value::Object(o) => Ok(Value::Object(
             o.iter()
                 .map(|(k, v)| {
-                    let expanded_current_path = if current_path.is_empty() {
+                    let expanded_path = if current_path.is_empty() {
                         k.to_string()
                     } else {
                         format!("{current_path}.{k}")
                     };
-                    let result =
-                        expand_tokens_helper(v, root, current_depth + 1, &expanded_current_path);
-                    (k.clone(), result)
+                    (
+                        k.clone(),
+                        expand_tokens_helper(v, root, current_depth + 1, &expanded_path).unwrap(),
+                    )
                 })
                 .collect(),
-        ),
-        Value::Array(arr) => Value::Array(
+        )),
+        Value::Array(arr) => Ok(Value::Array(
             arr.iter()
-                .map(|v| expand_tokens_helper(v, root, current_depth + 1, current_path))
+                .map(|v| expand_tokens_helper(v, root, current_depth + 1, current_path).unwrap())
                 .collect(),
-        ),
-        _ => val.clone(),
+        )),
+        _ => Ok(val.clone()),
     }
 }
 
 fn get_value_from_path(key_path: &[&str], root: &Value) -> Option<Value> {
-    let mut current_value = root;
-
-    for key in key_path {
-        if let Value::Object(obj) = current_value {
-            current_value = obj.get(*key)?;
-        } else {
-            return None;
-        }
-    }
-
-    Some(current_value.clone())
+    key_path
+        .iter()
+        .try_fold(root, |acc, &key| acc.as_object()?.get(key))
+        .cloned()
 }
 
 #[cfg(test)]
