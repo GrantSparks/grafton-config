@@ -30,12 +30,12 @@ const DEFAULT_CONFIG_FILE: &str = "default.toml";
 /// is an error parsing the configuration.
 pub fn load_config_from_dir<C: TokenExpandingConfig>(config_dir: &str) -> Result<C, Error> {
     let run_mode = determine_run_mode();
-    let config_paths = setup_config_paths(config_dir, &run_mode);
+    let config_paths = setup_config_paths(config_dir, run_mode);
 
     let mut figment = Figment::new();
-    for path in config_paths {
+    for path in &config_paths {
         if path.exists() {
-            let config = load_config_from_file(&path)
+            let config = load_config_from_file(path)
                 .map_err(|e| Error::ConfigError(format!("Error loading config: {e}")))?;
             figment = figment.merge(config);
         } else if path.file_name().unwrap_or_default() == DEFAULT_CONFIG_FILE {
@@ -51,15 +51,15 @@ pub fn load_config_from_dir<C: TokenExpandingConfig>(config_dir: &str) -> Result
     let config: C = figment
         .extract()
         .map_err(|e| Error::ConfigError(format!("Error extracting config: {e}")))?;
-    let config_value: Value = serde_json::to_value(config)
+    let config_value: Value = serde_json::to_value(&config)
         .map_err(|e| Error::SerializationError(format!("Error serializing config: {e}")))?;
     let replaced = expand_tokens(&config_value);
     serde_json::from_value(replaced)
         .map_err(|e| Error::DeserializationError(format!("Error deserializing config: {e}")))
 }
 
-fn determine_run_mode() -> String {
-    env::var("RUN_MODE").unwrap_or_else(|_| "dev".to_string())
+fn determine_run_mode() -> &'static str {
+    env::var("RUN_MODE").map_or("dev", |val| Box::leak(val.into_boxed_str()))
 }
 
 fn setup_config_paths(config_dir: &str, run_mode: &str) -> Vec<PathBuf> {
@@ -90,7 +90,14 @@ fn handle_env_vars() {
 }
 
 fn map_env_var(key: &str) -> String {
-    key.replace("WEBSITE_", "WEBSITE.")
-        .replace("SESSION_", "SESSION.")
-        .replace("LOGGER_", "LOGGER.")
+    let mut new_key = String::with_capacity(key.len());
+    for ch in key.chars() {
+        match ch {
+            'W' if key.starts_with("WEBSITE_") => new_key.push_str("WEBSITE."),
+            'S' if key.starts_with("SESSION_") => new_key.push_str("SESSION."),
+            'L' if key.starts_with("LOGGER_") => new_key.push_str("LOGGER."),
+            _ => new_key.push(ch),
+        }
+    }
+    new_key
 }

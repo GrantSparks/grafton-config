@@ -18,11 +18,10 @@ fn expand_tokens_helper(
     current_depth: usize,
     current_path: &str,
 ) -> Result<Value, String> {
-    if current_depth > TOKEN_RESOLVE_DEPTH_LIMIT {
-        return Err(format!(
-            "Token resolve recursion detected at depth {current_depth}. Current path: {current_path}, Current value: {val:?}"
-        ));
-    }
+    assert!(
+        current_depth <= TOKEN_RESOLVE_DEPTH_LIMIT,
+        "Token resolve recursion detected at depth {current_depth}. Current path: {current_path}, Current value: {val:?}"
+    );
 
     match val {
         Value::String(s) => {
@@ -32,7 +31,7 @@ fn expand_tokens_helper(
                     || format!("${{{}}}", key_path.join(".")),
                     |replacement_val| {
                         expand_tokens_helper(
-                            &replacement_val,
+                            replacement_val,
                             root,
                             current_depth + 1,
                             &key_path.join("."),
@@ -50,37 +49,43 @@ fn expand_tokens_helper(
                     },
                 )
             });
-            Ok(Value::String(result.to_string()))
+            Ok(Value::String(result.into_owned()))
         }
-        Value::Object(o) => Ok(Value::Object(
-            o.iter()
-                .map(|(k, v)| {
-                    let expanded_path = if current_path.is_empty() {
-                        k.to_string()
-                    } else {
-                        format!("{current_path}.{k}")
-                    };
-                    (
-                        k.clone(),
-                        expand_tokens_helper(v, root, current_depth + 1, &expanded_path).unwrap(),
-                    )
-                })
-                .collect(),
-        )),
-        Value::Array(arr) => Ok(Value::Array(
-            arr.iter()
-                .map(|v| expand_tokens_helper(v, root, current_depth + 1, current_path).unwrap())
-                .collect(),
-        )),
+        Value::Object(o) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in o {
+                let expanded_path = if current_path.is_empty() {
+                    k.to_string()
+                } else {
+                    format!("{current_path}.{k}")
+                };
+                map.insert(
+                    k.clone(),
+                    expand_tokens_helper(v, root, current_depth + 1, &expanded_path)?,
+                );
+            }
+            Ok(Value::Object(map))
+        }
+        Value::Array(arr) => {
+            let mut vec = Vec::with_capacity(arr.len());
+            for v in arr {
+                vec.push(expand_tokens_helper(
+                    v,
+                    root,
+                    current_depth + 1,
+                    current_path,
+                )?);
+            }
+            Ok(Value::Array(vec))
+        }
         _ => Ok(val.clone()),
     }
 }
 
-fn get_value_from_path(key_path: &[&str], root: &Value) -> Option<Value> {
+fn get_value_from_path<'a>(key_path: &[&str], root: &'a Value) -> Option<&'a Value> {
     key_path
         .iter()
         .try_fold(root, |acc, &key| acc.as_object()?.get(key))
-        .cloned()
 }
 
 #[cfg(test)]
