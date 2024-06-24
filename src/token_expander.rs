@@ -326,4 +326,58 @@ mod tests {
         }
         .run();
     }
+
+    #[test]
+    fn test_deeply_nested_objects() {
+        TestCase {
+            input: json!({
+                "level1": {
+                    "level2": {
+                        "level3": {
+                            "level4": {
+                                "level5": {
+                                    "value": "${level1.level2.level3.level4.level5.deep}",
+                                    "deep": "nested_value"
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+            expected: json!({
+                "level1": {
+                    "level2": {
+                        "level3": {
+                            "level4": {
+                                "level5": {
+                                    "value": "nested_value",
+                                    "deep": "nested_value"
+                                }
+                            }
+                        }
+                    }
+                }
+            }),
+        }
+        .run();
+    }
+
+    #[test]
+    fn test_large_json_object() {
+        let mut large_json = serde_json::Map::new();
+        for i in 0..1000 {
+            large_json.insert(format!("key{}", i), json!("value"));
+        }
+        large_json.insert("replace_me".to_string(), json!("${replace_with}"));
+        large_json.insert("replace_with".to_string(), json!("replaced_value"));
+
+        TestCase {
+            input: Value::Object(large_json.clone()),
+            expected: {
+                large_json.insert("replace_me".to_string(), json!("replaced_value"));
+                Value::Object(large_json)
+            },
+        }
+        .run();
+    }
 }
