@@ -227,6 +227,28 @@ mod tests {
     }
 
     #[test]
+    fn test_deeply_nested_recursion() {
+        let mut deep_json = serde_json::Map::new();
+        let mut current = &mut deep_json;
+        for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT + 1 {
+            let key = format!("level{}", i);
+            let mut next = serde_json::Map::new();
+            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            current.insert(key.clone(), Value::Object(next));
+            current = match current.get_mut(&key).unwrap() {
+                Value::Object(map) => map,
+                _ => panic!("Unexpected structure"),
+            };
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            expand_tokens(&Value::Object(deep_json));
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_mixed_type_array() {
         TestCase {
             input: json!({
