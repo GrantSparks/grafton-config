@@ -4,7 +4,7 @@ use {
     serde_json::Value,
 };
 
-const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99;
+const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99; // The tests will fail below a depth limit of at least 7
 
 static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{(.*?)\}").unwrap());
 
@@ -216,6 +216,148 @@ mod tests {
     }
 
     #[test]
+    fn test_deeply_nested_recursion_should_panic() {
+        let mut deep_json = serde_json::Map::new();
+        let mut current = &mut deep_json;
+        for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
+            let key = format!("level{}", i);
+            let mut next = serde_json::Map::new();
+            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            current.insert(key.clone(), Value::Object(next));
+            current = match current.get_mut(&key).unwrap() {
+                Value::Object(map) => map,
+                _ => panic!("Unexpected structure"),
+            };
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            expand_tokens_helper(
+                &Value::Object(deep_json.clone()),
+                &Value::Object(deep_json),
+                0,
+                "",
+            )
+            .unwrap();
+        });
+
+        assert!(result.is_err(), "Test failed: expected panic, got Ok");
+    }
+
+    #[test]
+    fn test_deeply_nested_objects_with_mixed_types() {
+        let mut deep_json = serde_json::Map::new();
+        let mut current = &mut deep_json;
+        for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
+            let key = format!("level{}", i);
+            let mut next = serde_json::Map::new();
+            next.insert(
+                "next".to_string(),
+                Value::Array(vec![Value::String(format!("${{{}}}", key))]),
+            );
+            current.insert(key.clone(), Value::Object(next));
+            current = match current.get_mut(&key).unwrap() {
+                Value::Object(map) => map,
+                _ => panic!("Unexpected structure"),
+            };
+        }
+
+        // Add a final key that should not exceed the limit
+        current.insert("final".to_string(), Value::Bool(true));
+
+        let result = std::panic::catch_unwind(|| {
+            expand_tokens_helper(
+                &Value::Object(deep_json.clone()),
+                &Value::Object(deep_json),
+                0,
+                "",
+            )
+            .unwrap();
+        });
+
+        assert!(result.is_err(), "Test failed: expected panic, got Ok");
+    }
+
+    #[test]
+    fn test_multiple_nested_tokens_at_limit() {
+        let mut deep_json = serde_json::Map::new();
+        let mut current = &mut deep_json;
+        for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
+            let key = format!("level{}", i);
+            let mut next = serde_json::Map::new();
+            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            current.insert(key.clone(), Value::Object(next));
+            current = match current.get_mut(&key).unwrap() {
+                Value::Object(map) => map,
+                _ => panic!("Unexpected structure"),
+            };
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            expand_tokens_helper(
+                &Value::Object(deep_json.clone()),
+                &Value::Object(deep_json),
+                0,
+                "",
+            )
+            .unwrap();
+        });
+
+        assert!(result.is_err(), "Test failed: expected panic, got Ok");
+    }
+
+    #[test]
+    fn test_recursive_tokens_across_different_paths() {
+        TestCase {
+            input: json!({
+                "a": "${b}",
+                "b": "${c}",
+                "c": "${d}",
+                "d": "${e}",
+                "e": "final_value"
+            }),
+            expected: json!({
+                "a": "final_value",
+                "b": "final_value",
+                "c": "final_value",
+                "d": "final_value",
+                "e": "final_value"
+            }),
+        }
+        .run();
+    }
+
+    #[test]
+    fn test_complex_structure_with_array_and_objects() {
+        TestCase {
+            input: json!({
+                "level1": {
+                    "array": [
+                        {
+                            "nested": "${level1.value1}"
+                        },
+                        "${level1.value2}"
+                    ],
+                    "value1": "nested_value1",
+                    "value2": "nested_value2"
+                }
+            }),
+            expected: json!({
+                "level1": {
+                    "array": [
+                        {
+                            "nested": "nested_value1"
+                        },
+                        "nested_value2"
+                    ],
+                    "value1": "nested_value1",
+                    "value2": "nested_value2"
+                }
+            }),
+        }
+        .run();
+    }
+
+    #[test]
     fn test_token_recursion_limit() {
         let json_obj = json!({"recursion": "${recursion}"});
 
@@ -242,7 +384,13 @@ mod tests {
         }
 
         let result = std::panic::catch_unwind(|| {
-            expand_tokens(&Value::Object(deep_json));
+            expand_tokens_helper(
+                &Value::Object(deep_json.clone()),
+                &Value::Object(deep_json),
+                0,
+                "",
+            )
+            .unwrap();
         });
 
         assert!(result.is_err());
