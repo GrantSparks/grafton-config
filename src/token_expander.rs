@@ -1,15 +1,11 @@
-use {
-    once_cell::sync::Lazy,
-    regex::{Captures, Regex},
-    serde_json::Value,
-};
+use {crate::Error, once_cell::sync::Lazy, regex::Regex, serde_json::Value};
 
 const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99; // The tests will fail below a depth limit of at least 7
 
 static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{(.*?)\}").unwrap());
 
-pub fn expand_tokens(val: &Value) -> Value {
-    expand_tokens_helper(val, val, 0, "").unwrap()
+pub fn expand_tokens(val: &Value) -> Result<Value, Error> {
+    expand_tokens_helper(val, val, 0, "")
 }
 
 fn expand_tokens_helper(
@@ -17,39 +13,76 @@ fn expand_tokens_helper(
     root: &Value,
     current_depth: usize,
     current_path: &str,
-) -> Result<Value, String> {
-    assert!(
-        current_depth <= TOKEN_RESOLVE_DEPTH_LIMIT,
-        "Token resolve recursion detected at depth {current_depth}. Current path: {current_path}, Current value: {val:?}"
-    );
+) -> Result<Value, Error> {
+    if current_depth > TOKEN_RESOLVE_DEPTH_LIMIT {
+        return Err(Error::TokenRecursionLimitExceeded {
+            depth: current_depth,
+            path: current_path.to_string(),
+            value: val.clone(),
+        });
+    }
 
     match val {
         Value::String(s) => {
-            let result = TOKEN_REGEX.replace_all(s, |caps: &Captures| {
+            let mut result = s.clone();
+            let mut recursion_detected = false;
+
+            while let Some(caps) = TOKEN_REGEX.captures(&result) {
+                let full_match = caps.get(0).unwrap().as_str();
                 let key_path: Vec<&str> = caps[1].split('.').collect();
-                get_value_from_path(&key_path, root).map_or_else(
-                    || format!("${{{}}}", key_path.join(".")),
-                    |replacement_val| {
-                        expand_tokens_helper(
+
+                match get_value_from_path(&key_path, root) {
+                    Some(replacement_val) => {
+                        let new_path = if current_path.is_empty() {
+                            caps[1].to_string()
+                        } else {
+                            let mut path = String::from(current_path);
+                            path.push('.');
+                            path.push_str(&caps[1]);
+                            path
+                        };
+
+                        if new_path == current_path {
+                            recursion_detected = true;
+                            break;
+                        }
+
+                        match expand_tokens_helper(
                             replacement_val,
                             root,
                             current_depth + 1,
-                            &key_path.join("."),
-                        )
-                        .map_or_else(
-                            |_| format!("${{{}}}", key_path.join(".")),
-                            |expanded_val| match expanded_val {
-                                Value::String(s) => s,
-                                Value::Number(n) => n.to_string(),
-                                Value::Bool(b) => b.to_string(),
-                                Value::Null => "null".to_string(),
-                                _ => format!("${{{}}}", key_path.join(".")),
-                            },
-                        )
-                    },
-                )
-            });
-            Ok(Value::String(result.into_owned()))
+                            &new_path,
+                        ) {
+                            Ok(expanded_val) => {
+                                let replacement = match expanded_val {
+                                    Value::String(s) => s,
+                                    Value::Number(n) => n.to_string(),
+                                    Value::Bool(b) => b.to_string(),
+                                    Value::Null => "null".to_string(),
+                                    _ => full_match.to_string(),
+                                };
+                                result = result.replace(full_match, &replacement);
+                            }
+                            Err(Error::TokenRecursionLimitExceeded { .. }) => {
+                                recursion_detected = true;
+                                break;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    None => break,
+                }
+            }
+
+            if recursion_detected {
+                Err(Error::TokenRecursionLimitExceeded {
+                    depth: current_depth,
+                    path: current_path.to_string(),
+                    value: Value::String(result),
+                })
+            } else {
+                Ok(Value::String(result))
+            }
         }
         Value::Object(o) => {
             let mut map = serde_json::Map::new();
@@ -68,12 +101,13 @@ fn expand_tokens_helper(
         }
         Value::Array(arr) => {
             let mut vec = Vec::with_capacity(arr.len());
-            for v in arr {
+            for (i, v) in arr.iter().enumerate() {
+                let expanded_path = format!("{current_path}[{i}]");
                 vec.push(expand_tokens_helper(
                     v,
                     root,
                     current_depth + 1,
-                    current_path,
+                    &expanded_path,
                 )?);
             }
             Ok(Value::Array(vec))
@@ -100,7 +134,7 @@ mod tests {
 
     impl TestCase {
         fn run(self) {
-            let result = expand_tokens(&self.input);
+            let result = expand_tokens(&self.input).expect("expand_tokens failed unexpectedly");
             assert_eq!(result, self.expected, "Failed on input: {:?}", self.input);
         }
     }
@@ -220,9 +254,9 @@ mod tests {
         let mut deep_json = serde_json::Map::new();
         let mut current = &mut deep_json;
         for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
-            let key = format!("level{}", i);
+            let key = format!("level{i}");
             let mut next = serde_json::Map::new();
-            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            next.insert("next".to_string(), Value::String(format!("${{{key}}}")));
             current.insert(key.clone(), Value::Object(next));
             current = match current.get_mut(&key).unwrap() {
                 Value::Object(map) => map,
@@ -248,11 +282,11 @@ mod tests {
         let mut deep_json = serde_json::Map::new();
         let mut current = &mut deep_json;
         for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
-            let key = format!("level{}", i);
+            let key = format!("level{i}");
             let mut next = serde_json::Map::new();
             next.insert(
                 "next".to_string(),
-                Value::Array(vec![Value::String(format!("${{{}}}", key))]),
+                Value::Array(vec![Value::String(format!("${{{key}}}"))]),
             );
             current.insert(key.clone(), Value::Object(next));
             current = match current.get_mut(&key).unwrap() {
@@ -282,9 +316,9 @@ mod tests {
         let mut deep_json = serde_json::Map::new();
         let mut current = &mut deep_json;
         for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT {
-            let key = format!("level{}", i);
+            let key = format!("level{i}");
             let mut next = serde_json::Map::new();
-            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            next.insert("next".to_string(), Value::String(format!("${{{key}}}")));
             current.insert(key.clone(), Value::Object(next));
             current = match current.get_mut(&key).unwrap() {
                 Value::Object(map) => map,
@@ -361,21 +395,27 @@ mod tests {
     fn test_token_recursion_limit() {
         let json_obj = json!({"recursion": "${recursion}"});
 
-        let panicked = std::panic::catch_unwind(|| {
-            expand_tokens(&json_obj);
-        });
+        let result = expand_tokens(&json_obj);
+        assert!(result.is_err(), "Expected an error, but got: {result:?}");
 
-        assert!(panicked.is_err());
+        match result {
+            Err(Error::TokenRecursionLimitExceeded { depth, path, value }) => {
+                assert_eq!(depth, 1);
+                assert_eq!(path, "recursion");
+                assert_eq!(value, Value::String("${recursion}".to_string()));
+            }
+            _ => panic!("Expected TokenRecursionLimitExceeded error, but got: {result:?}"),
+        }
     }
 
     #[test]
     fn test_deeply_nested_recursion() {
         let mut deep_json = serde_json::Map::new();
         let mut current = &mut deep_json;
-        for i in 0..TOKEN_RESOLVE_DEPTH_LIMIT + 1 {
-            let key = format!("level{}", i);
+        for i in 0..=TOKEN_RESOLVE_DEPTH_LIMIT {
+            let key = format!("level{i}");
             let mut next = serde_json::Map::new();
-            next.insert("next".to_string(), Value::String(format!("${{{}}}", key)));
+            next.insert("next".to_string(), Value::String(format!("${{{key}}}")));
             current.insert(key.clone(), Value::Object(next));
             current = match current.get_mut(&key).unwrap() {
                 Value::Object(map) => map,
@@ -383,17 +423,12 @@ mod tests {
             };
         }
 
-        let result = std::panic::catch_unwind(|| {
-            expand_tokens_helper(
-                &Value::Object(deep_json.clone()),
-                &Value::Object(deep_json),
-                0,
-                "",
-            )
-            .unwrap();
-        });
-
+        let result = expand_tokens(&Value::Object(deep_json));
         assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            Error::TokenRecursionLimitExceeded { .. }
+        ));
     }
 
     #[test]
@@ -536,7 +571,7 @@ mod tests {
     fn test_large_json_object() {
         let mut large_json = serde_json::Map::new();
         for i in 0..1000 {
-            large_json.insert(format!("key{}", i), json!("value"));
+            large_json.insert(format!("key{i}"), json!("value"));
         }
         large_json.insert("replace_me".to_string(), json!("${replace_with}"));
         large_json.insert("replace_with".to_string(), json!("replaced_value"));

@@ -53,11 +53,10 @@ pub fn load_config_from_dir<C: TokenExpandingConfig>(config_dir: &str) -> Result
         .map_err(|e| Error::ConfigError(format!("Error extracting config: {e}")))?;
     let config_value: Value = serde_json::to_value(&config)
         .map_err(|e| Error::SerializationError(format!("Error serializing config: {e}")))?;
-    let replaced = expand_tokens(&config_value);
+    let replaced = expand_tokens(&config_value)?;
     serde_json::from_value(replaced)
         .map_err(|e| Error::DeserializationError(format!("Error deserializing config: {e}")))
 }
-
 fn determine_run_mode() -> &'static str {
     env::var("RUN_MODE").map_or("dev", |val| Box::leak(val.into_boxed_str()))
 }
