@@ -20,7 +20,7 @@ static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\\*)\$\{(.*?)\}").u
 ///
 /// ```
 /// use serde_json::json;
-/// use your_crate_name::expand_tokens;
+/// use crate::grafton_config::expand_tokens;
 ///
 /// let input = json!({
 ///     "firstName": "John",
@@ -32,6 +32,58 @@ static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\\*)\$\{(.*?)\}").u
 /// let expanded = expand_tokens(&input).unwrap();
 /// assert_eq!(expanded["fullName"], "John Doe");
 /// assert_eq!(expanded["greeting"], "Hello, John Doe!");
+/// ```
+///
+/// ```
+/// use serde_json::json;
+/// use crate::grafton_config::expand_tokens;
+///
+/// let input = json!({
+///     "data": {
+///         "special key": "value"
+///     },
+///     "message": "This is a ${data.special key}."
+/// });
+///
+/// let expanded = expand_tokens(&input).unwrap();
+/// assert_eq!(expanded["message"], "This is a value.");
+/// ```
+///
+/// ```
+/// use serde_json::json;
+/// use crate::grafton_config::expand_tokens;
+///
+/// let input = json!({
+///     "name": "John",
+///     "message": "Hello, ${nonExistentPath}!"
+/// });
+///
+/// let expanded = expand_tokens(&input).unwrap();
+/// assert_eq!(expanded["message"], "Hello, ${nonExistentPath}!");
+/// ```
+///
+/// ```
+/// use serde_json::json;
+/// use crate::grafton_config::expand_tokens;
+///
+/// let input = json!({
+///     "website": {
+///         "bind_address": "127.0.0.1",
+///         "plugin_info": {
+///             "api": {
+///                 "url": "https://${website.public_hostname}/chatgpt-plugin/openapi.yaml"
+///             },
+///             "legal_info_url": "https://${website.public_hostname}/legal",
+///             "logo_url": "https://${website.public_hostname}/images/website_logo_500x500.png"
+///         },
+///         "public_hostname": "localhost"
+///     }
+/// });
+///
+/// let expanded = expand_tokens(&input).unwrap();
+/// assert_eq!(expanded["website"]["plugin_info"]["api"]["url"], "https://localhost/chatgpt-plugin/openapi.yaml");
+/// assert_eq!(expanded["website"]["plugin_info"]["legal_info_url"], "https://localhost/legal");
+/// assert_eq!(expanded["website"]["plugin_info"]["logo_url"], "https://localhost/images/website_logo_500x500.png");
 /// ```
 pub fn expand_tokens(val: &Value) -> Result<Value, Error> {
     expand_tokens_helper(val, val, 0, "")
