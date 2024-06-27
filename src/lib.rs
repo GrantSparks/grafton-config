@@ -12,7 +12,9 @@ pub use error::Error;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-pub use {config::GraftonConfig, config_loader::load_config_from_dir};
+pub use {
+    config::GraftonConfig, config_loader::load_config_from_dir, token_expander::expand_tokens,
+};
 
 pub trait GraftonConfigProvider: TokenExpandingConfig {
     fn get_grafton_config(&self) -> &GraftonConfig;

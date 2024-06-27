@@ -1,9 +1,38 @@
 use {crate::Error, once_cell::sync::Lazy, regex::Regex, serde_json::Value};
 
-const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99; // The tests will fail below a depth limit of at least 7
+const TOKEN_RESOLVE_DEPTH_LIMIT: usize = 99;
 
-static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$\{(.*?)\}").unwrap());
+static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\\*)\$\{(.*?)\}").unwrap());
 
+/// Expands tokens within the given JSON value.
+///
+/// This function recursively searches for and expands tokens in the format `${token}` within
+/// the provided JSON value. It supports nested tokens and various JSON data types (objects, arrays, strings).
+///
+/// # Errors
+///
+/// This function will return an `Error::TokenRecursionLimitExceeded` if the recursion depth exceeds
+/// the specified limit (99).
+///
+/// It may also return other errors that are specific to token expansion failures.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+/// use your_crate_name::expand_tokens;
+///
+/// let input = json!({
+///     "firstName": "John",
+///     "lastName": "Doe",
+///     "fullName": "${firstName} ${lastName}",
+///     "greeting": "Hello, ${fullName}!"
+/// });
+///
+/// let expanded = expand_tokens(&input).unwrap();
+/// assert_eq!(expanded["fullName"], "John Doe");
+/// assert_eq!(expanded["greeting"], "Hello, John Doe!");
+/// ```
 pub fn expand_tokens(val: &Value) -> Result<Value, Error> {
     expand_tokens_helper(val, val, 0, "")
 }
@@ -23,96 +52,152 @@ fn expand_tokens_helper(
     }
 
     match val {
-        Value::String(s) => {
-            let mut result = s.clone();
-            let mut recursion_detected = false;
-
-            while let Some(caps) = TOKEN_REGEX.captures(&result) {
-                let full_match = caps.get(0).unwrap().as_str();
-                let key_path: Vec<&str> = caps[1].split('.').collect();
-
-                match get_value_from_path(&key_path, root) {
-                    Some(replacement_val) => {
-                        let new_path = if current_path.is_empty() {
-                            caps[1].to_string()
-                        } else {
-                            let mut path = String::from(current_path);
-                            path.push('.');
-                            path.push_str(&caps[1]);
-                            path
-                        };
-
-                        if new_path == current_path {
-                            recursion_detected = true;
-                            break;
-                        }
-
-                        match expand_tokens_helper(
-                            replacement_val,
-                            root,
-                            current_depth + 1,
-                            &new_path,
-                        ) {
-                            Ok(expanded_val) => {
-                                let replacement = match expanded_val {
-                                    Value::String(s) => s,
-                                    Value::Number(n) => n.to_string(),
-                                    Value::Bool(b) => b.to_string(),
-                                    Value::Null => "null".to_string(),
-                                    _ => full_match.to_string(),
-                                };
-                                result = result.replace(full_match, &replacement);
-                            }
-                            Err(Error::TokenRecursionLimitExceeded { .. }) => {
-                                recursion_detected = true;
-                                break;
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    None => break,
-                }
-            }
-
-            if recursion_detected {
-                Err(Error::TokenRecursionLimitExceeded {
-                    depth: current_depth,
-                    path: current_path.to_string(),
-                    value: Value::String(result),
-                })
-            } else {
-                Ok(Value::String(result))
-            }
-        }
-        Value::Object(o) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in o {
-                let expanded_path = if current_path.is_empty() {
-                    k.to_string()
-                } else {
-                    format!("{current_path}.{k}")
-                };
-                map.insert(
-                    k.clone(),
-                    expand_tokens_helper(v, root, current_depth + 1, &expanded_path)?,
-                );
-            }
-            Ok(Value::Object(map))
-        }
-        Value::Array(arr) => {
-            let mut vec = Vec::with_capacity(arr.len());
-            for (i, v) in arr.iter().enumerate() {
-                let expanded_path = format!("{current_path}[{i}]");
-                vec.push(expand_tokens_helper(
-                    v,
-                    root,
-                    current_depth + 1,
-                    &expanded_path,
-                )?);
-            }
-            Ok(Value::Array(vec))
-        }
+        Value::String(s) => expand_string(s, root, current_depth, current_path),
+        Value::Object(o) => expand_object(o, root, current_depth, current_path),
+        Value::Array(arr) => expand_array(arr, root, current_depth, current_path),
         _ => Ok(val.clone()),
+    }
+}
+
+fn expand_string(
+    s: &str,
+    root: &Value,
+    current_depth: usize,
+    current_path: &str,
+) -> Result<Value, Error> {
+    let mut result = String::new();
+    let mut last_match_end = 0;
+    let mut recursion_detected = false;
+
+    for caps in TOKEN_REGEX.captures_iter(s) {
+        let full_match = caps.get(0).unwrap();
+        let backslashes = caps.get(1).unwrap().as_str();
+        let key = caps.get(2).unwrap().as_str();
+
+        // Add the text between the last match and this one
+        result.push_str(&s[last_match_end..full_match.start()]);
+
+        let (prefix, should_expand) = process_backslashes(backslashes);
+        result.push_str(&prefix);
+
+        if should_expand {
+            // Expand the token
+            let key_path: Vec<&str> = key.split('.').collect();
+
+            if let Some(replacement_val) = get_value_from_path(&key_path, root) {
+                let new_path = if current_path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{current_path}.{key}")
+                };
+
+                if new_path == current_path {
+                    recursion_detected = true;
+                    result.push_str("${");
+                    result.push_str(key);
+                    result.push('}');
+                } else {
+                    match expand_tokens_helper(replacement_val, root, current_depth + 1, &new_path)
+                    {
+                        Ok(expanded_val) => {
+                            let replacement = match expanded_val {
+                                Value::String(s) => s,
+                                Value::Number(n) => n.to_string(),
+                                Value::Bool(b) => b.to_string(),
+                                Value::Null => "null".to_string(),
+                                _ => format!("${{{key}}}"),
+                            };
+                            result.push_str(&replacement);
+                        }
+                        Err(Error::TokenRecursionLimitExceeded { .. }) => {
+                            recursion_detected = true;
+                            result.push_str("${");
+                            result.push_str(key);
+                            result.push('}');
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            } else {
+                result.push_str("${");
+                result.push_str(key);
+                result.push('}');
+            }
+        } else {
+            // Token is escaped, don't expand it
+            result.push_str("${");
+            result.push_str(key);
+            result.push('}');
+        }
+
+        last_match_end = full_match.end();
+    }
+
+    // Add any remaining text after the last match
+    result.push_str(&s[last_match_end..]);
+    if recursion_detected {
+        Err(Error::TokenRecursionLimitExceeded {
+            depth: current_depth,
+            path: current_path.to_string(),
+            value: Value::String(result),
+        })
+    } else {
+        Ok(Value::String(result))
+    }
+}
+
+fn expand_object(
+    o: &serde_json::Map<String, Value>,
+    root: &Value,
+    current_depth: usize,
+    current_path: &str,
+) -> Result<Value, Error> {
+    let mut map = serde_json::Map::new();
+    for (k, v) in o {
+        let expanded_path = if current_path.is_empty() {
+            k.to_string()
+        } else {
+            format!("{current_path}.{k}")
+        };
+        map.insert(
+            k.clone(),
+            expand_tokens_helper(v, root, current_depth + 1, &expanded_path)?,
+        );
+    }
+    Ok(Value::Object(map))
+}
+
+fn expand_array(
+    arr: &[Value],
+    root: &Value,
+    current_depth: usize,
+    current_path: &str,
+) -> Result<Value, Error> {
+    let mut vec = Vec::with_capacity(arr.len());
+    for (i, v) in arr.iter().enumerate() {
+        let expanded_path = if current_path.is_empty() {
+            i.to_string()
+        } else {
+            format!("{current_path}[{i}]")
+        };
+        vec.push(expand_tokens_helper(
+            v,
+            root,
+            current_depth + 1,
+            &expanded_path,
+        )?);
+    }
+    Ok(Value::Array(vec))
+}
+
+fn process_backslashes(backslashes: &str) -> (String, bool) {
+    let count = backslashes.len();
+    if count % 2 == 0 {
+        // Even number of backslashes, reduce by half and expand
+        (backslashes[..count / 2].to_string(), true)
+    } else {
+        // Odd number of backslashes, reduce by half (rounded down) and don't expand
+        (backslashes[..count / 2].to_string(), false)
     }
 }
 
@@ -137,6 +222,81 @@ mod tests {
             let result = expand_tokens(&self.input).expect("expand_tokens failed unexpectedly");
             assert_eq!(result, self.expected, "Failed on input: {:?}", self.input);
         }
+    }
+
+    /// Test cases for `process_backslashes` function.
+    ///
+    /// The `process_backslashes` function handles escape sequences in strings.
+    /// The behavior is as follows:
+    /// - An even number of backslashes should result in half the number of backslashes and expansion of the token.
+    /// - An odd number of backslashes should result in half the number of backslashes (rounded down) and no expansion of the token.
+    ///
+    /// This function ensures that the `process_backslashes` function works correctly for all edge cases.
+
+    #[test]
+    fn test_process_backslashes() {
+        // Even number of backslashes, should expand
+        assert_eq!(process_backslashes(""), (String::new(), true));
+        assert_eq!(process_backslashes("\\\\"), ("\\".to_string(), true));
+        assert_eq!(process_backslashes("\\\\\\\\"), ("\\\\".to_string(), true));
+        assert_eq!(
+            process_backslashes("\\\\\\\\\\\\"),
+            ("\\\\\\".to_string(), true)
+        );
+
+        // Odd number of backslashes, should not expand
+        assert_eq!(process_backslashes("\\"), (String::new(), false));
+        assert_eq!(process_backslashes("\\\\\\"), ("\\".to_string(), false));
+        assert_eq!(
+            process_backslashes("\\\\\\\\\\"),
+            ("\\\\".to_string(), false)
+        );
+        assert_eq!(
+            process_backslashes("\\\\\\\\\\\\\\"),
+            ("\\\\\\".to_string(), false)
+        );
+
+        // Edge cases
+        assert_eq!(process_backslashes(""), (String::new(), true)); // No backslashes, should expand
+        assert_eq!(process_backslashes("\\"), (String::new(), false)); // Single backslash, should not expand
+        assert_eq!(process_backslashes("\\\\\\"), ("\\".to_string(), false)); // Three backslashes, should not expand
+        assert_eq!(
+            process_backslashes("\\\\\\\\\\\\"),
+            ("\\\\\\".to_string(), true)
+        ); // Six backslashes, should expand
+    }
+
+    #[test]
+    fn test_backslash_escaped_tokens() {
+        TestCase {
+            input: json!({
+                "simple_literal": "No token here",
+                "simple_token": "Hello, ${name}!",
+                "escaped_token": "This is a \\${token}",
+                "double_backslash_token": "This is a \\\\${token}",
+                "multiple_backslashes_token": "This is a \\\\\\\\${token}",
+                "literal_backslashes": "This is a \\\\text",
+                "mixed_escapes": "Mix of backslashes: \\\\${token1} and \\\\\\\\\\${token2}",
+                "backslash_end": "Backslash at end: \\\\",
+                "array_escapes": {
+                    "array": ["\\${token1}", "\\\\${token2}", "\\\\\\\\${token3}"]
+                }
+            }),
+            expected: json!({
+                "simple_literal": "No token here",
+                "simple_token": "Hello, ${name}!",
+                "escaped_token": "This is a ${token}",
+                "double_backslash_token": "This is a \\${token}",
+                "multiple_backslashes_token": "This is a \\\\${token}",
+                "literal_backslashes": "This is a \\\\text",
+                "mixed_escapes": "Mix of backslashes: \\${token1} and \\\\${token2}",
+                "backslash_end": "Backslash at end: \\\\",
+                "array_escapes": {
+                    "array": ["${token1}", "\\${token2}", "\\\\${token3}"]
+                }
+            }),
+        }
+        .run();
     }
 
     #[test]
