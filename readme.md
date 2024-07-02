@@ -267,7 +267,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Licensing
 
-The Grafton Machine Shed API server repository is dual-licensed, offering both open source and commercial licensing options.
+The Grafton Machine Shed config repository is dual-licensed, offering both open source and commercial licensing options.
 
 ### Open Source License
 
@@ -283,11 +283,11 @@ Unless explicitly stated otherwise, all files in this repository are licensed un
 
 ### Commercial License
 
-For those wishing to integrate the Grafton Machine Shed server into closed-source applications, or who need more flexibility than the Apache License 2.0 allows, a commercial license is available. This license permits private modifications and proprietary integration.
+For those wishing to integrate the Grafton Machine Shed config into closed-source applications, or who need more flexibility than the Apache License 2.0 allows, a commercial license is available. This license permits private modifications and proprietary integration.
 
 #### Benefits of the Commercial License
 
-- **Use in Proprietary Applications**: Integrate the Grafton Machine Shed server seamlessly into closed-source applications.
+- **Use in Proprietary Applications**: Integrate the Grafton Machine Shed config seamlessly into closed-source applications.
 - **Flexibility and Freedom**: Greater flexibility in the use, modification, and distribution of the project.
 - **Support and Warranty**: Access to enhanced support, maintenance services, and warranty options.
 
