@@ -64,7 +64,7 @@ fn expand_string(
     current_depth: usize,
     current_path: &str,
 ) -> Result<Value, Error> {
-    let mut result = String::new();
+    let mut result = String::with_capacity(s.len());
     let mut last_match_end = 0;
     let mut recursion_detected = false;
 
@@ -80,20 +80,16 @@ fn expand_string(
         if should_expand {
             result.push_str(&prefix);
             let new_path = format_new_path(current_path, key);
-            let replacement = expand_token(key, root, &new_path, current_depth);
-            match replacement {
-                Ok(replacement) => result.push_str(&replacement),
-                Err(_e) => {
-                    recursion_detected = true;
-                    result.push_str("${");
-                    result.push_str(key);
-                    result.push('}');
-                }
+            if let Ok(replacement) = expand_token(key, root, &new_path, current_depth) {
+                result.push_str(&replacement);
+            } else {
+                recursion_detected = true;
+                result.push_str("${");
+                result.push_str(key);
+                result.push('}');
             }
         } else {
-            if !prefix.is_empty() {
-                result.push_str(&prefix[..prefix.len() - 1]); // Remove one backslash
-            }
+            result.push_str(&prefix[..prefix.len() - 1]); // Remove one backslash
             result.push_str("${");
             result.push_str(key);
             result.push('}');
@@ -145,11 +141,7 @@ fn expand_array(
 fn process_backslashes(backslashes: &str) -> (String, bool) {
     let count = backslashes.len();
     let should_expand = count % 2 == 0;
-    let prefix_count = if should_expand {
-        count / 2
-    } else {
-        count / 2 + 1
-    };
+    let prefix_count = count / 2 + usize::from(!should_expand);
     let prefix: String = backslashes.chars().take(prefix_count).collect();
     (prefix, should_expand)
 }
