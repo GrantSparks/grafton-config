@@ -74,22 +74,29 @@ fn expand_string(
         let key = caps.get(2).unwrap().as_str();
 
         result.push_str(&s[last_match_end..full_match.start()]);
+
         let (prefix, should_expand) = process_backslashes(backslashes);
-        result.push_str(&prefix);
 
         if should_expand {
+            result.push_str(&prefix);
             let new_path = format_new_path(current_path, key);
             let replacement = expand_token(key, root, &new_path, current_depth);
-
             match replacement {
                 Ok(replacement) => result.push_str(&replacement),
-                Err(e) => {
+                Err(_e) => {
                     recursion_detected = true;
-                    handle_recursion_error(&mut result, key, &e);
+                    result.push_str("${");
+                    result.push_str(key);
+                    result.push('}');
                 }
             }
         } else {
-            handle_escaped_token(&mut result, key);
+            if !prefix.is_empty() {
+                result.push_str(&prefix[..prefix.len() - 1]); // Remove one backslash
+            }
+            result.push_str("${");
+            result.push_str(key);
+            result.push('}');
         }
 
         last_match_end = full_match.end();
@@ -137,7 +144,14 @@ fn expand_array(
 
 fn process_backslashes(backslashes: &str) -> (String, bool) {
     let count = backslashes.len();
-    (backslashes[..count / 2].to_string(), count % 2 == 0)
+    let should_expand = count % 2 == 0;
+    let prefix_count = if should_expand {
+        count / 2
+    } else {
+        count / 2 + 1
+    };
+    let prefix: String = backslashes.chars().take(prefix_count).collect();
+    (prefix, should_expand)
 }
 
 fn get_value_from_path<'a>(key_path: &[&str], root: &'a Value) -> Option<&'a Value> {
@@ -180,20 +194,6 @@ fn expand_token(
                 .map(convert_value_to_string)
         },
     )
-}
-
-fn handle_recursion_error(result: &mut String, key: &str, error: &Error) {
-    if matches!(error, Error::TokenRecursionLimitExceeded { .. }) {
-        result.push_str("${");
-        result.push_str(key);
-        result.push('}');
-    }
-}
-
-fn handle_escaped_token(result: &mut String, key: &str) {
-    result.push_str("${");
-    result.push_str(key);
-    result.push('}');
 }
 
 fn finalize_expansion(
@@ -243,63 +243,26 @@ mod tests {
     }
 
     #[test]
-    fn test_format_new_array_path_empty_current_path() {
-        let current_path = "";
-        let index = 0;
-        let expected = "0";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
+    fn test_format_new_array_path() {
+        let test_cases = vec![
+            ("", 0, "0"),
+            ("", 5, "5"),
+            ("parent", 0, "parent[0]"),
+            ("parent", 5, "parent[5]"),
+            ("parent.child", 0, "parent.child[0]"),
+            ("parent.child", 5, "parent.child[5]"),
+            ("parent.child[2]", 0, "parent.child[2][0]"),
+            ("parent.child[2]", 5, "parent.child[2][5]"),
+        ];
 
-        let index = 5;
-        let expected = "5";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
+        for (current_path, index, expected) in test_cases {
+            let result = format_new_array_path(current_path, index);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
-    fn test_format_new_array_path_non_empty_current_path() {
-        let current_path = "parent";
-        let index = 0;
-        let expected = "parent[0]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-
-        let index = 5;
-        let expected = "parent[5]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_format_new_array_path_nested_current_path() {
-        let current_path = "parent.child";
-        let index = 0;
-        let expected = "parent.child[0]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-
-        let index = 5;
-        let expected = "parent.child[5]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_format_new_array_path_complex_current_path() {
-        let current_path = "parent.child[2]";
-        let index = 0;
-        let expected = "parent.child[2][0]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-
-        let index = 5;
-        let expected = "parent.child[2][5]";
-        let result = format_new_array_path(current_path, index);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_get_value_from_path_valid_paths() {
+    fn test_get_value_from_path_basic() {
         let json_data = json!({
             "level1": {
                 "level2": {
@@ -310,47 +273,28 @@ mod tests {
             }
         });
 
-        let path = vec!["level1", "level2", "level3", "target"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!("found me")));
+        let binding = json!("found me");
+        let test_cases = vec![
+            (vec!["level1", "level2", "level3", "target"], Some(&binding)),
+            (
+                vec!["level1", "level2"],
+                json_data.get("level1").unwrap().get("level2"),
+            ),
+            (vec!["level1"], json_data.get("level1")),
+            (vec!["level1", "level2", "nonexistent"], None),
+            (vec!["nonexistent"], None),
+            (vec![], Some(&json_data)),
+        ];
 
-        let path = vec!["level1", "level2"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, json_data.get("level1").unwrap().get("level2"));
-
-        let path = vec!["level1"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, json_data.get("level1"));
-    }
-
-    #[test]
-    fn test_get_value_from_path_invalid_paths() {
-        let json_data = json!({
-            "level1": {
-                "level2": {
-                    "level3": {
-                        "target": "found me"
-                    }
-                }
-            }
-        });
-
-        let path = vec!["level1", "level2", "nonexistent"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, None);
-
-        let path = vec!["nonexistent"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, None);
-
-        let path = vec![];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json_data));
+        for (path, expected) in test_cases {
+            let result = get_value_from_path(&path, &json_data);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
     fn test_get_value_from_path_edge_cases() {
-        let json_data = json!({
+        let json_data_edge = json!({
             "level1": {
                 "": {
                     "target": "found me"
@@ -361,30 +305,26 @@ mod tests {
             "null_key": null,
         });
 
-        // Path with an empty string key
-        let path = vec!["level1", ""];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, json_data.get("level1").unwrap().get(""));
+        let binding = json!("");
+        let test_cases_edge = vec![
+            (
+                vec!["level1", ""],
+                json_data_edge.get("level1").unwrap().get(""),
+            ),
+            (vec!["level1", "null_value"], Some(&json!(null))),
+            (vec!["empty_string"], Some(&binding)),
+            (vec!["null_key"], Some(&json!(null))),
+        ];
 
-        // Path to a null value
-        let path = vec!["level1", "null_value"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(null)));
-
-        // Path to an empty string value
-        let path = vec!["empty_string"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!("")));
-
-        // Path to a null key
-        let path = vec!["null_key"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(null)));
+        for (path, expected) in test_cases_edge {
+            let result = get_value_from_path(&path, &json_data_edge);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
     fn test_get_value_from_path_arrays() {
-        let json_data = json!({
+        let json_data_array = json!({
             "level1": {
                 "array": [
                     {
@@ -397,232 +337,184 @@ mod tests {
             }
         });
 
-        let path = vec!["level1", "array", "0", "level2"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(
-            result,
-            json_data
-                .get("level1")
-                .unwrap()
-                .get("array")
-                .unwrap()
-                .get(0)
-                .unwrap()
-                .get("level2")
-        );
+        let test_cases_array = vec![
+            (
+                vec!["level1", "array", "0", "level2"],
+                json_data_array
+                    .get("level1")
+                    .unwrap()
+                    .get("array")
+                    .unwrap()
+                    .get(0)
+                    .unwrap()
+                    .get("level2"),
+            ),
+            (
+                vec!["level1", "array", "1", "level2"],
+                json_data_array
+                    .get("level1")
+                    .unwrap()
+                    .get("array")
+                    .unwrap()
+                    .get(1)
+                    .unwrap()
+                    .get("level2"),
+            ),
+        ];
 
-        let path = vec!["level1", "array", "1", "level2"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(
-            result,
-            json_data
-                .get("level1")
-                .unwrap()
-                .get("array")
-                .unwrap()
-                .get(1)
-                .unwrap()
-                .get("level2")
-        );
+        for (path, expected) in test_cases_array {
+            let result = get_value_from_path(&path, &json_data_array);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
     fn test_get_value_from_path_mixed_types() {
-        let json_data = json!({
+        let json_data_mixed = json!({
             "array": [1, "two", true, null, {"five": 5}],
             "object": {
                 "nested_array": [10, {"key": "value"}]
             }
         });
 
-        let path = vec!["array", "0"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(1)));
+        let binding_a = json!(1);
+        let binding_b = json!("two");
+        let binding_c = json!(5);
+        let binding_d = json!(10);
+        let binding_e = json!("value");
+        let test_cases_mixed = vec![
+            (vec!["array", "0"], Some(&binding_a)),
+            (vec!["array", "1"], Some(&binding_b)),
+            (vec!["array", "2"], Some(&json!(true))),
+            (vec!["array", "3"], Some(&json!(null))),
+            (vec!["array", "4", "five"], Some(&binding_c)),
+            (vec!["object", "nested_array", "0"], Some(&binding_d)),
+            (vec!["object", "nested_array", "1", "key"], Some(&binding_e)),
+        ];
 
-        let path = vec!["array", "1"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!("two")));
-
-        let path = vec!["array", "2"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(true)));
-
-        let path = vec!["array", "3"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(null)));
-
-        let path = vec!["array", "4", "five"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(5)));
-
-        let path = vec!["object", "nested_array", "0"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!(10)));
-
-        let path = vec!["object", "nested_array", "1", "key"];
-        let result = get_value_from_path(&path, &json_data);
-        assert_eq!(result, Some(&json!("value")));
+        for (path, expected) in test_cases_mixed {
+            let result = get_value_from_path(&path, &json_data_mixed);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
-    fn test_expand_string() {
+    fn test_expand_functions() {
         let root = json!({
             "name": "John",
             "greeting": "Hello, ${name}!",
-        });
-
-        let result = expand_string("Hello, ${name}!", &root, 0, "").unwrap();
-        assert_eq!(result, Value::String("Hello, John!".to_string()));
-    }
-
-    #[test]
-    fn test_expand_object() {
-        let root = json!({
-            "name": "John",
             "info": {
                 "greeting": "Hello, ${name}!"
-            }
-        });
-
-        let obj = root.get("info").unwrap().as_object().unwrap();
-        let result = expand_object(obj, &root, 0, "").unwrap();
-        assert_eq!(
-            result,
-            json!({
-                "greeting": "Hello, John!"
-            })
-        );
-    }
-
-    #[test]
-    fn test_expand_array() {
-        let root = json!({
-            "name": "John",
+            },
             "array": ["Hello, ${name}!", "${name} is here."]
         });
 
-        let array = root.get("array").unwrap().as_array().unwrap();
-        let result = expand_array(array, &root, 0, "").unwrap();
-        assert_eq!(result, json!(["Hello, John!", "John is here."]));
-    }
-
-    #[test]
-    fn test_expand_token() {
-        let root = json!({
-            "name": "John"
-        });
-
-        let result = expand_token("name", &root, "name", 0).unwrap();
-        assert_eq!(result, "John");
-
-        let non_existent_result = expand_token("non_existent", &root, "non_existent", 0).unwrap();
-        assert_eq!(non_existent_result, "${non_existent}");
-    }
-
-    #[test]
-    fn test_handle_recursion_error() {
-        let mut result = String::new();
-        handle_recursion_error(
-            &mut result,
-            "key",
-            &Error::TokenRecursionLimitExceeded {
-                depth: 100,
-                path: "key".to_string(),
-                value: json!("value"),
-            },
-        );
-        assert_eq!(result, "${key}");
-    }
-
-    #[test]
-    fn test_handle_escaped_token() {
-        let mut result = String::new();
-        handle_escaped_token(&mut result, "key");
-        assert_eq!(result, "${key}");
-    }
-
-    #[test]
-    fn test_finalize_expansion() {
-        let result = finalize_expansion("Hello, John!".to_string(), false, 0, "").unwrap();
-        assert_eq!(result, Value::String("Hello, John!".to_string()));
-
-        let recursion_result = finalize_expansion("Hello, ${name}".to_string(), true, 1, "name");
-        assert!(recursion_result.is_err());
-    }
-
-    #[test]
-    fn test_convert_value_to_string() {
-        assert_eq!(convert_value_to_string(json!("string")), "string");
-        assert_eq!(convert_value_to_string(json!(123)), "123");
-        assert_eq!(convert_value_to_string(json!(true)), "true");
-        assert_eq!(convert_value_to_string(json!(null)), "null");
         assert_eq!(
-            convert_value_to_string(json!({"key": "value"})),
-            "${{\"key\":\"value\"}}"
+            expand_string("Hello, ${name}!", &root, 0, "").unwrap(),
+            Value::String("Hello, John!".to_string())
         );
+
+        let obj = root.get("info").unwrap().as_object().unwrap();
+        assert_eq!(
+            expand_object(obj, &root, 0, "").unwrap(),
+            json!({"greeting": "Hello, John!"})
+        );
+
+        let array = root.get("array").unwrap().as_array().unwrap();
+        assert_eq!(
+            expand_array(array, &root, 0, "").unwrap(),
+            json!(["Hello, John!", "John is here."])
+        );
+
+        assert_eq!(expand_token("name", &root, "name", 0).unwrap(), "John");
+        assert_eq!(
+            expand_token("non_existent", &root, "non_existent", 0).unwrap(),
+            "${non_existent}"
+        );
+        assert_eq!(
+            finalize_expansion("Hello, John!".to_string(), false, 0, "").unwrap(),
+            Value::String("Hello, John!".to_string())
+        );
+        assert!(finalize_expansion("Hello, ${name}".to_string(), true, 1, "name").is_err());
+
+        let convert_cases = vec![
+            (json!("string"), "string"),
+            (json!(123), "123"),
+            (json!(true), "true"),
+            (json!(null), "null"),
+            (json!({"key": "value"}), "${{\"key\":\"value\"}}"),
+        ];
+
+        for (input, expected) in convert_cases {
+            assert_eq!(convert_value_to_string(input), expected);
+        }
     }
 
     #[test]
     fn test_process_backslashes() {
-        // Even number of backslashes, should expand
-        assert_eq!(process_backslashes(""), (String::new(), true));
-        assert_eq!(process_backslashes("\\\\"), ("\\".to_string(), true));
-        assert_eq!(process_backslashes("\\\\\\\\"), ("\\\\".to_string(), true));
-        assert_eq!(
-            process_backslashes("\\\\\\\\\\\\"),
-            ("\\\\\\".to_string(), true)
-        );
+        let test_cases = vec![
+            ("", (String::new(), true)),
+            ("\\\\", ("\\".to_string(), true)),
+            ("\\\\\\\\", ("\\\\".to_string(), true)),
+            ("\\\\\\\\\\", ("\\\\\\".to_string(), false)),
+            ("\\\\\\\\\\\\", ("\\\\\\".to_string(), true)),
+        ];
 
-        // Odd number of backslashes, should not expand
-        assert_eq!(process_backslashes("\\"), (String::new(), false));
-        assert_eq!(process_backslashes("\\\\\\"), ("\\".to_string(), false));
-        assert_eq!(
-            process_backslashes("\\\\\\\\\\"),
-            ("\\\\".to_string(), false)
-        );
-        assert_eq!(
-            process_backslashes("\\\\\\\\\\\\\\"),
-            ("\\\\\\".to_string(), false)
-        );
-
-        // Edge cases
-        assert_eq!(process_backslashes(""), (String::new(), true));
-        assert_eq!(process_backslashes("\\"), (String::new(), false));
-        assert_eq!(process_backslashes("\\\\\\"), ("\\".to_string(), false));
-        assert_eq!(
-            process_backslashes("\\\\\\\\\\\\"),
-            ("\\\\\\".to_string(), true)
-        );
+        for (input, expected) in test_cases {
+            let result = process_backslashes(input);
+            assert_eq!(result, expected, "Failed on input: {input:?}");
+        }
     }
 
     #[test]
-    fn test_backslash_escaped_tokens() {
+    fn test_single_backslash_escaping() {
         TestCase {
             input: json!({
-                "simple_literal": "No token here",
-                "simple_token": "Hello, ${name}!",
-                "escaped_token": "This is a \\${token}",
-                "double_backslash_token": "This is a \\\\${token}",
-                "multiple_backslashes_token": "This is a \\\\\\\\${token}",
-                "literal_backslashes": "This is a \\\\text",
-                "mixed_escapes": "Mix of backslashes: \\\\${token1} and \\\\\\\\\\${token2}",
-                "backslash_end": "Backslash at end: \\\\",
-                "array_escapes": {
-                    "array": ["\\${token1}", "\\\\${token2}", "\\\\\\\\${token3}"]
-                }
+                "escaped_token": "This is a \\${token}"
             }),
             expected: json!({
-                "simple_literal": "No token here",
-                "simple_token": "Hello, ${name}!",
-                "escaped_token": "This is a ${token}",
+                "escaped_token": "This is a ${token}"
+            }),
+        }
+        .run();
+    }
+
+    #[test]
+    fn test_multiple_backslashes_before_tokens() {
+        TestCase {
+            input: json!({
+                "double_backslash_token": "This is a \\\\${token}",
+                "quad_backslash_token": "This is a \\\\\\\\${token}"
+            }),
+            expected: json!({
                 "double_backslash_token": "This is a \\${token}",
-                "multiple_backslashes_token": "This is a \\\\${token}",
-                "literal_backslashes": "This is a \\\\text",
-                "mixed_escapes": "Mix of backslashes: \\${token1} and \\\\${token2}",
-                "backslash_end": "Backslash at end: \\\\",
-                "array_escapes": {
-                    "array": ["${token1}", "\\${token2}", "\\\\${token3}"]
-                }
+                "quad_backslash_token": "This is a \\\\${token}"
+            }),
+        }
+        .run();
+    }
+
+    #[test]
+    fn test_backslashes_in_arrays() {
+        TestCase {
+            input: json!({
+                "array_escapes": ["\\${token1}", "\\\\${token2}", "\\\\\\\\${token3}"]
+            }),
+            expected: json!({
+                "array_escapes": ["${token1}", "\\${token2}", "\\\\${token3}"]
+            }),
+        }
+        .run();
+    }
+
+    #[test]
+    fn test_complex_escapes_with_mixed_backslashes() {
+        TestCase {
+            input: json!({
+                "mixed_escapes": "Mix of backslashes: \\\\${token1} and \\\\\\\\\\${token2}"
+            }),
+            expected: json!({
+                "mixed_escapes": "Mix of backslashes: \\${token1} and \\\\${token2}"
             }),
         }
         .run();
