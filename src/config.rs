@@ -9,6 +9,7 @@ use {
 #[derivative(Default)]
 #[serde(default)]
 pub struct GraftonConfig {
-    #[derivative(Default(value = "\"dev\".into()"))]
-    pub run_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[derivative(Default(value = "None"))]
+    pub run_mode: Option<String>,
 }

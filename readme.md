@@ -1,35 +1,75 @@
-# Token Expansion in TOML Configuration
+# Grafton Config
 
-This library provides a flexible token expansion system for TOML configurations, allowing dynamic value substitution within your configuration files.
+Grafton Config is a flexible and powerful configuration library for Rust applications, featuring token expansion and layered configuration loading.
 
 ## Table of Contents
 
-- [Overview](#overview)
+- [Features](#features)
 - [Installation](#installation)
-- [Configuration Loading](#configuration-loading)
 - [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+  - [Configuration Loading](#configuration-loading)
+  - [Token Expansion](#token-expansion)
+- [Examples](#examples)
+  - [Simple Configuration](#simple-configuration)
+  - [Token Expansion Examples](#token-expansion-examples)
+  - [Generic Application Example](#generic-application-example)
+- [API Reference](#api-reference)
+- [Token Expansion Details](#token-expansion-details)
   - [Basic Syntax](#basic-syntax)
   - [Advanced Usage](#advanced-usage)
-- [Behavior and Limitations](#behavior-and-limitations)
-- [Examples](#examples)
-  - [Simple Expansion](#simple-expansion)
-  - [Nested Expansion](#nested-expansion)
-  - [Mixed Types](#mixed-types)
-  - [Configuration Override Example](#configuration-override-example)
+  - [Behavior and Limitations](#behavior-and-limitations)
 - [Contributing](#contributing)
 - [License](#license)
 
-## Overview
+## Features
 
-The token expansion system allows you to reference and reuse values across your TOML configuration. Tokens are expanded during the parsing process, resulting in a fully resolved configuration.
+- Layered configuration loading from multiple TOML files
+- Dynamic token expansion within configuration files
+- Support for environment-specific configurations
+- Flexible and extensible design
+- Integration with popular Rust web frameworks
 
 ## Installation
 
-```bash
-cargo add your_crate_name
+Add Grafton Config to your `Cargo.toml`:
+
+```toml
+[dependencies]
+grafton-config = "0.1.0"
 ```
 
-## Configuration Loading
+## Usage
+
+### Basic Usage
+
+1. Create your configuration struct:
+
+```rust
+use serde::{Deserialize, Serialize};
+use grafton_config::TokenExpandingConfig;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MyConfig {
+    // Your configuration fields here
+}
+
+impl TokenExpandingConfig for MyConfig {}
+```
+
+1. Load the configuration:
+
+```rust
+use grafton_config::load_config_from_dir;
+
+fn main() -> Result<(), grafton_config::Error> {
+    let config: MyConfig = load_config_from_dir("path/to/config/directory")?;
+    // Use your configuration
+    Ok(())
+}
+```
+
+### Configuration Loading
 
 The configuration is loaded from the following files in a specified directory:
 
@@ -37,21 +77,154 @@ The configuration is loaded from the following files in a specified directory:
 2. `local.toml`
 3. `{run_mode}.toml`
 
-The `run_mode` is determined by the `RUN_MODE` environment variable, defaulting to "dev" if not set.
+The `run_mode` is determined by the `RUN_MODE` environment variable, defaulting to "dev" if not set. Files are loaded in the order listed above, with later files overriding values from earlier ones.
 
-Files are loaded in the order listed above, with later files overriding values from earlier ones. This allows for a layered configuration approach:
+### Token Expansion
 
-- `default.toml`: Contains default settings
-- `local.toml`: Override defaults with local settings (not version controlled)
-- `{run_mode}.toml`: Environment-specific overrides (e.g., `dev.toml`, `prod.toml`)
+Grafton Config supports token expansion within your TOML files. Use the `${key_path}` syntax to reference other values in your configuration.
 
-## Usage
+## Examples
+
+### Simple Configuration
+
+```toml
+# config/default.toml
+[database]
+host = "localhost"
+port = 5432
+url = "postgresql://user:password@${database.host}:${database.port}/mydb"
+```
+
+### Token Expansion Examples
+
+```toml
+# Basic expansion
+name = "John"
+greeting = "Hello, ${name}!"
+
+# Nested expansion
+[person]
+first_name = "John"
+last_name = "Doe"
+full_name = "${person.first_name} ${person.last_name}"
+
+# Mixed types
+age = 30
+is_student = false
+profile = "Age: ${age}, Student: ${is_student}"
+```
+
+### Generic Application Example
+
+Here's an example of using Grafton Config in a typical Rust application:
+
+```rust
+use serde::{Deserialize, Serialize};
+use grafton_config::{load_config_from_dir, TokenExpandingConfig, Error};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatabaseConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub database_name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AppConfig {
+    pub database: DatabaseConfig,
+    pub server: ServerConfig,
+    pub debug_mode: bool,
+}
+
+impl TokenExpandingConfig for AppConfig {}
+
+fn main() -> Result<(), Error> {
+    // Load the configuration from the 'config' directory
+    let config: AppConfig = load_config_from_dir("config")?;
+
+    // Use the configuration
+    println!("Database URL: postgres://{}:{}@{}:{}/{}",
+        config.database.username,
+        config.database.password,
+        config.database.host,
+        config.database.port,
+        config.database.database_name
+    );
+
+    println!("Server will start on {}:{}", config.server.host, config.server.port);
+    println!("Debug mode: {}", config.debug_mode);
+
+    // Your application logic here...
+
+    Ok(())
+}
+```
+
+Example TOML files:
+
+```toml
+# config/default.toml
+[database]
+host = "localhost"
+port = 5432
+username = "default_user"
+password = "default_password"
+database_name = "myapp"
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+debug_mode = false
+
+# config/local.toml
+[database]
+username = "dev_user"
+password = "dev_password"
+
+debug_mode = true
+
+# config/prod.toml
+[database]
+host = "db.production.com"
+username = "${PROD_DB_USER}"
+password = "${PROD_DB_PASSWORD}"
+
+[server]
+host = "0.0.0.0"
+port = 80
+
+debug_mode = false
+```
+
+This setup demonstrates:
+
+- A layered configuration approach with default, local, and production settings
+- Use of token expansion for sensitive information in the production config
+- A typical structure for a Rust application using Grafton Config
+
+## API Reference
+
+- `load_config_from_dir(path: &str) -> Result<T, Error>`: Load and parse configuration from a directory
+- `expand_tokens(config: &mut T) -> Result<(), Error>`: Expand tokens in a configuration struct
+- `GraftonConfig`: Trait for Grafton configuration structs
+- `TokenExpandingConfig`: Trait for configuration structs that support token expansion
+
+## Token Expansion Details
 
 ### Basic Syntax
 
 Tokens use the following format in your TOML files:
 
-```
+```toml
 ${key_path}
 ```
 
@@ -92,7 +265,7 @@ Where `key_path` is a dot-separated path to the desired value within the TOML st
    literal = "This is a \${literal} dollar sign"
    ```
 
-## Behavior and Limitations
+### Behavior and Limitations
 
 - **Recursion Depth**: Limited to 99 to prevent infinite loops.
 - **Non-existent Paths**: Left unexpanded if the path doesn't exist.
@@ -100,174 +273,13 @@ Where `key_path` is a dot-separated path to the desired value within the TOML st
 - **Circular References**: Will result in an error due to the recursion limit.
 - **Partial Expansions**: Tokens are expanded as much as possible, with unexpandable parts remaining.
 
-## Examples
-
-### Simple Expansion
-
-```toml
-name = "John"
-greeting = "Hello, ${name}!"
-```
-
-Expands to:
-
-```toml
-name = "John"
-greeting = "Hello, John!"
-```
-
-### Nested Expansion
-
-```toml
-[person]
-first_name = "John"
-last_name = "Doe"
-
-full_name = "${person.first_name} ${person.last_name}"
-```
-
-Expands to:
-
-```toml
-[person]
-first_name = "John"
-last_name = "Doe"
-
-full_name = "John Doe"
-```
-
-### Mixed Types
-
-```toml
-age = 30
-is_student = false
-profile = "Age: ${age}, Student: ${is_student}"
-```
-
-Expands to:
-
-```toml
-age = 30
-is_student = false
-profile = "Age: 30, Student: false"
-```
-
-### Configuration Override Example
-
-Let's consider a realistic scenario for a web application with different environments. We'll use three configuration files: `default.toml`, `local.toml`, and `prod.toml`.
-
-`default.toml`:
-
-```toml
-run_mode = "dev"
-
-[website]
-bind_address = "127.0.0.1"
-port = 8080
-public_url = "http://${website.bind_address}:${website.port}"
-
-[database]
-host = "localhost"
-port = 5432
-name = "myapp_db"
-user = "db_user"
-password = "default_password"
-url = "postgresql://${database.user}:${database.password}@${database.host}:${database.port}/${database.name}"
-
-[logging]
-level = "info"
-file = "logs/myapp.log"
-
-[feature_flags]
-enable_new_ui = false
-max_users = 100
-
-[oauth]
-provider = "google"
-client_id = "default_client_id"
-client_secret = "default_client_secret"
-```
-
-`local.toml`:
-
-```toml
-[database]
-password = "local_dev_password"
-
-[logging]
-level = "debug"
-
-[feature_flags]
-enable_new_ui = true
-max_users = 10
-
-[oauth]
-client_id = "local_client_id"
-client_secret = "local_client_secret"
-```
-
-`prod.toml`:
-
-```toml
-run_mode = "prod"
-
-[website]
-bind_address = "0.0.0.0"
-port = 80
-public_url = "https://example.com"
-
-[database]
-host = "db.internal.example.com"
-password = "${PROD_DB_PASSWORD}"  # This will be set via an environment variable
-
-[logging]
-level = "warn"
-file = "/var/log/myapp/production.log"
-
-[feature_flags]
-enable_new_ui = true
-max_users = 10000
-
-[oauth]
-provider = "okta"
-client_id = "${PROD_OAUTH_CLIENT_ID}"  # This will be set via an environment variable
-client_secret = "${PROD_OAUTH_CLIENT_SECRET}"  # This will be set via an environment variable
-```
-
-Now, let's examine how the configuration would resolve in different scenarios:
-
-1. **Development Environment (default)**:
-   - The final configuration will be a merge of `default.toml` and `local.toml`.
-   - The database will use the local development password.
-   - Logging will be set to debug level.
-   - The new UI will be enabled, but with a limit of 10 users.
-   - OAuth will use the local client ID and secret.
-
-2. **Production Environment**:
-   - Set the environment variable `RUN_MODE=prod`.
-   - The final configuration will be a merge of `default.toml`, `local.toml`, and `prod.toml`, with `prod.toml` taking precedence.
-   - The website will bind to all interfaces (0.0.0.0) on port 80.
-   - The database will use the production host and the password from the `PROD_DB_PASSWORD` environment variable.
-   - Logging will be set to warn level and output to the production log file.
-   - The new UI will be enabled with a limit of 10000 users.
-   - OAuth will use Okta as the provider, with client ID and secret from environment variables.
-
-This example demonstrates:
-
-- Layered configuration with sensible defaults and environment-specific overrides.
-- Use of token expansion to build complex values (like database URLs) from individual components.
-- Integration with environment variables for sensitive information in production.
-- How different run modes can significantly alter the application's behavior and settings.
-
-Remember to handle the expansion of environment variables securely and to never commit sensitive information (like production passwords or API keys) to version control. Instead, use placeholders that can be filled by secure environment variables or a secrets management system in your production environment.
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Licensing
+## License
 
-The Grafton Machine Shed config repository is dual-licensed, offering both open source and commercial licensing options.
+Grafton Config is dual-licensed under the Apache License 2.0 (for open-source use) and a commercial license.
 
 ### Open Source License
 
@@ -275,22 +287,18 @@ Unless explicitly stated otherwise, all files in this repository are licensed un
 
 #### Key Features of the Apache License 2.0
 
-- **Permissive License**: Enables free commercial and non-commercial use, distribution, and modification of the software without requiring source code access. Allows combining with other open source licenses.
-
-- **Explicit Patent License**: Grants an express patent license from all contributors to users, protecting both parties from patent infringement claims related to the software.
-
-- **Patent Retaliation Provision**: Terminates the license for any party that files a patent infringement lawsuit alleging that the software infringes a patent, thus protecting users and contributors.
+- **Permissive License**: Enables free commercial and non-commercial use, distribution, and modification of the software without requiring source code access.
+- **Explicit Patent License**: Grants an express patent license from all contributors to users.
+- **Patent Retaliation Provision**: Protects users and contributors from patent infringement claims.
 
 ### Commercial License
 
-For those wishing to integrate the Grafton Machine Shed config into closed-source applications, or who need more flexibility than the Apache License 2.0 allows, a commercial license is available. This license permits private modifications and proprietary integration.
+For those wishing to integrate Grafton Config into closed-source applications or who need more flexibility than the Apache License 2.0 allows, a commercial license is available.
 
 #### Benefits of the Commercial License
 
-- **Use in Proprietary Applications**: Integrate the Grafton Machine Shed config seamlessly into closed-source applications.
+- **Use in Proprietary Applications**: Integrate Grafton Config seamlessly into closed-source applications.
 - **Flexibility and Freedom**: Greater flexibility in the use, modification, and distribution of the project.
 - **Support and Warranty**: Access to enhanced support, maintenance services, and warranty options.
 
-## Questions and Commercial Licensing
-
-For any questions about licensing, using the software from the Grafton Machine Shed or to inquire about our commercial license please contact us at [grant@grafton.ai](mailto:grant@grafton.ai).
+For commercial licensing inquiries, please contact [grant@grafton.ai](mailto:grant@grafton.ai).

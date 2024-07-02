@@ -31,3 +31,6 @@ version = ">=0.26.1"
 [dependencies.serde]
 features = ["derive"]
 version = "1"
+
+[dev-dependencies]
+tempfile = "*"
