@@ -3,6 +3,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use figment::{
@@ -14,6 +15,11 @@ use serde_json::Value;
 use crate::{token_expander::expand_tokens, Error, TokenExpandingConfig};
 
 const DEFAULT_CONFIG_FILE: &str = "default.toml";
+
+// Mutex to ensure thread safety when accessing/modifying environment variables
+lazy_static::lazy_static! {
+    static ref ENV_MUTEX: Mutex<()> = Mutex::new(());
+}
 
 /// Load configuration from the given directory.
 ///
@@ -85,6 +91,7 @@ fn load_config_from_file(path: &Path) -> Result<Figment, Error> {
 }
 
 fn handle_env_vars() {
+    let _lock = ENV_MUTEX.lock().unwrap();
     env::vars().for_each(|(key, value)| {
         env::set_var(map_env_var(&key), value);
     });
@@ -104,7 +111,7 @@ mod tests {
     use derivative::Derivative;
     use serde::{Deserialize, Serialize};
     use tempfile::tempdir;
-
+    
     use super::*;
     use std::fs::File;
     use std::io::Write;
@@ -122,6 +129,7 @@ mod tests {
     impl TokenExpandingConfig for TestConfig {}
 
     fn setup_test_env(config_dir: &std::path::Path) {
+        let _lock = ENV_MUTEX.lock().unwrap();
         env::set_current_dir(config_dir).unwrap();
     }
 
@@ -165,10 +173,18 @@ mod tests {
         "#,
         );
 
-        env::set_var("RUN_MODE", "prod");
+        {
+            let _lock = ENV_MUTEX.lock().unwrap();
+            env::set_var("RUN_MODE", "prod");
+        }
+
         let config: TestConfig = load_config_from_dir(".").unwrap();
         assert_eq!(config.test_value, Some("prod".to_string()));
-        env::remove_var("RUN_MODE");
+
+        {
+            let _lock = ENV_MUTEX.lock().unwrap();
+            env::remove_var("RUN_MODE");
+        }
     }
 
     #[test]
@@ -199,9 +215,17 @@ mod tests {
         "#,
         );
 
-        env::set_var("RUN_MODE", "nonexistent");
+        {
+            let _lock = ENV_MUTEX.lock().unwrap();
+            env::set_var("RUN_MODE", "nonexistent");
+        }
+
         let config: TestConfig = load_config_from_dir(".").unwrap();
         assert_eq!(config.test_value, Some("default".to_string()));
-        env::remove_var("RUN_MODE");
+
+        {
+            let _lock = ENV_MUTEX.lock().unwrap();
+            env::remove_var("RUN_MODE");
+        }
     }
 }
