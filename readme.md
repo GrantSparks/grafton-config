@@ -1,11 +1,7 @@
 
 # Grafton Config
 
-Grafton Config is a flexible and powerful configuration library for Rust applications, featuring token expansion and layered configuration loading.
-
-## Overview
-
-Grafton Config is a Rust-based configuration library that supports token replacement and multiple deployment scenarios.
+Grafton Config is a Rust-based configuration library for Rust applications, featuring token expansion and layered configuration loading for TOML format configuration files.
 
 ## Features
 
@@ -13,7 +9,6 @@ Grafton Config is a Rust-based configuration library that supports token replace
 - Dynamic token expansion within configuration files
 - Support for environment-specific configurations
 - Flexible and extensible design
-- Integration with popular Rust web frameworks
 
 ## Installation
 
@@ -186,10 +181,9 @@ literal = "This is a \${literal} dollar sign"
 
 ### Behavior and Limitations
 
-- **Recursion Depth**: Limited to 99 to prevent infinite loops.
 - **Non-existent Paths**: Left unexpanded if the path doesn't exist.
 - **Data Types**: Can expand to various TOML data types (string, integer, float, boolean, datetime).
-- **Circular References**: Will result in an error due to the recursion limit.
+- **Circular References**: Will result in an error due to the recursion limit. Current limit is depth 99.
 - **Partial Expansions**: Tokens are expanded as much as possible, with unexpandable parts remaining.
 
 ## Contributing
