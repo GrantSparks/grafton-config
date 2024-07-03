@@ -36,7 +36,7 @@ Add Grafton Config to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-grafton-config = "0.1.0"
+grafton-config = "*"
 ```
 
 ## Usage
