@@ -1,17 +1,20 @@
-name: Rust
+name: Rust CI/CD
 
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - '*'
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
+    if: ${{ !contains(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
 
     steps:
@@ -21,4 +24,24 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
       env:
-          TMPDIR: ${{ runner.temp }}
+        TMPDIR: ${{ runner.temp }}
+
+  publish:
+    if: ${{ contains(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout sources
+      uses: actions/checkout@v4
+
+    - name: Install stable toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Publish to crates.io
+      run: cargo publish --token ${{ secrets.CRATES_TOKEN }}
+      env:
+        CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
