@@ -180,7 +180,6 @@ literal = "This is a \${literal} dollar sign"
 
 ### Behavior and Limitations
 
-- **Non-existent Paths**: Left unexpanded if the path doesn't exist.
 - **Data Types**: Can expand to various TOML data types (string, integer, float, boolean, datetime).
 - **Circular References**: Will result in an error due to the recursion limit. Current limit is depth 99.
 - **Partial Expansions**: Tokens are expanded as much as possible, with unexpandable parts remaining.
