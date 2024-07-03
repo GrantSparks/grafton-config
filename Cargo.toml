@@ -5,12 +5,14 @@ edition = "2021"
 authors = ["Grant Sparks <grant@grafton.ai>"]
 description = "Load configuration from toml files with token variable expansion and environment overrides"
 license = "Apache-2.0"
-repository = "https://github.com/GrantSparks/grafton"
+license-file = "LICENSE"
+repository = "https://github.com/GrantSparks/grafton-config"
 homepage = "https://www.grafton.ai"
 categories = ["config"]
 keywords = ["configuration", "config", "settings"]
 publish = false
 include = ["Cargo.toml", "src/**/*"]
+readme = "readme.md"
 
 [dependencies]
 derivative = "2"
