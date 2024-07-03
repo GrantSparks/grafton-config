@@ -128,7 +128,6 @@ database_url = "postgresql://user:password@${server.host}:${server.port}/mydb"
 ## API Reference
 
 - `load_config_from_dir(path: &str) -> Result<T, Error>`: Load and parse configuration from a directory
-- `expand_tokens(config: &mut T) -> Result<(), Error>`: Expand tokens in a configuration struct
 - `GraftonConfig`: Trait for Grafton configuration structs
 - `TokenExpandingConfig`: Trait for configuration structs that support token expansion
 

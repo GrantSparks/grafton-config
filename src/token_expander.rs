@@ -15,23 +15,6 @@ static TOKEN_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\\*)\$\{(.*?)\}").u
 ///
 /// It may also return other errors that are specific to token expansion failures.
 ///
-/// # Examples
-///
-/// ```
-/// use serde_json::json;
-/// use crate::grafton_config::expand_tokens;
-///
-/// let input = json!({
-///     "firstName": "John",
-///     "lastName": "Doe",
-///     "fullName": "${firstName} ${lastName}",
-///     "greeting": "Hello, ${fullName}!"
-/// });
-///
-/// let expanded = expand_tokens(&input).unwrap();
-/// assert_eq!(expanded["fullName"], "John Doe");
-/// assert_eq!(expanded["greeting"], "Hello, John Doe!");
-/// ```
 pub fn expand_tokens(val: &Value) -> Result<Value, Error> {
     expand_tokens_helper(val, val, 0, "")
 }
