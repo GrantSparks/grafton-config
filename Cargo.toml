@@ -10,7 +10,6 @@ repository = "https://github.com/GrantSparks/grafton-config"
 homepage = "https://www.grafton.ai"
 categories = ["config"]
 keywords = ["configuration", "config", "settings"]
-publish = false
 include = ["Cargo.toml", "src/**/*"]
 readme = "readme.md"
 
