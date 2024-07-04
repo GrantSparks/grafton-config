@@ -1,6 +1,6 @@
 [package]
 name = "grafton-config"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["Grant Sparks <grant@grafton.ai>"]
 description = "Load configuration from toml files with token variable expansion and environment overrides"
