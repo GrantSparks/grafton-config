@@ -17,7 +17,7 @@ struct AppConfig {
 impl TokenExpandingConfig for AppConfig {}
 
 fn main() -> Result<(), Error> {
-    let config: AppConfig = grafton_config::load_config_from_dir("examples/config")?;
+    let config = grafton_config::load_config_from_dir::<AppConfig>("examples/config")?;
     println!("Database URL: {}", config.server.database_url);
     Ok(())
 }
