@@ -105,10 +105,8 @@ fn map_env_var(key: &str) -> String {
         _ => key.to_string(),
     }
 }
-/*
 
-// Tests removed until refactoring is complete
-
+//Note:  RUST_TEST_THREADS = "1" has been set in .cargo/config.toml because these tests are still not entirely thread safe
 #[cfg(test)]
 mod tests {
     use derivative::Derivative;
@@ -232,4 +230,3 @@ mod tests {
         }
     }
 }
- */
