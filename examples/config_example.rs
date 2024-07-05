@@ -1,5 +1,5 @@
+use grafton_config::{Error, TokenExpandingConfig};
 use serde::{Deserialize, Serialize};
-use grafton_config::{TokenExpandingConfig, Error};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Server {
