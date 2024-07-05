@@ -17,7 +17,7 @@ Robust configuration management is crucial for:
 2. **Security:** Sensitive information like API keys must be handled with care.
 3. **Scalability:** As your app grows, so does the complexity of its configuration.
 
-`grafton-config` addresses these challenges, providing a comprehensive solution for Rust developers.
+`grafton-config` addresses these challenges, providing a comprehensive solution for Rust developers.  For more information on configuration management in Rust, check out my detailed blog post [here](https://blog.grafton.ai/configuration-management-for-rust-applications-15b2a0346b80).
 
 ## Installation
 
@@ -167,6 +167,10 @@ url = "postgresql://user:password@${database.host}:${database.port}/mydb"
 - `load_config_from_dir(path: &str) -> Result<T, Error>`: Load and parse configuration from a directory
 - `GraftonConfig`: Trait for grafton-configuration structs
 - `TokenExpandingConfig`: Trait for configuration structs that support token expansion
+
+## Resources
+
+- [Blog tutorial: Configuration Management for Rust Applications](https://blog.grafton.ai/configuration-management-for-rust-applications-15b2a0346b80)
 
 ## Contributing
 
